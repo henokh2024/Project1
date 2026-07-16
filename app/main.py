@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from app.routes.auth_routes import router as auth_router
+from app.routes.incident_routes import router as incident_router
 
 
 # Create the FastAPI application object.
@@ -8,7 +10,11 @@ app = FastAPI(
     title="Secure Microservice API",
     description="Secure FastAPI microservice with authentication and observability.",
     version="1.0.0",
+  
 )
+
+app.include_router(auth_router)
+app.include_router(incident_router)
 
 
 # Root endpoint

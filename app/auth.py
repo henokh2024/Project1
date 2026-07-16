@@ -4,8 +4,11 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+import fastapi
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 
-load_dotenv
+load_dotenv()
 
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
@@ -22,6 +25,10 @@ password_context = CryptContext(
     deprecated="auto",
 )
 
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="/auth/login"
+)
+
 def hash_password(password: str) -> str:
     return password_context.hash(password)
 
@@ -34,6 +41,9 @@ def verify_password(
         plain_password,
         hashed_password,
     )
+
+
+
 
 
 def create_access_token(username: str) -> str:
@@ -56,6 +66,12 @@ def create_access_token(username: str) -> str:
 
 
 def verify_access_token(token: str) -> str:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
     try:
         payload = jwt.decode(
             token,
@@ -66,9 +82,14 @@ def verify_access_token(token: str) -> str:
         username = payload.get("sub")
 
         if username is None:
-            raise ValueError("Token subject is missing")
+            raise credentials_exception
 
         return username
 
-    except (JWTError, ValueError):
-        raise ValueError("Invalid or expired token")
+    except JWTError:
+        raise credentials_exception
+    
+def get_current_user(
+        token: str = Depends(oauth2_scheme),
+) -> str: 
+    return verify_access_token(token)
