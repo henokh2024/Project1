@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: p1_backend
+    environment:
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: network_password
+      POSTGRES_DB: metrics_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  web:
+    build: .
+    container_name: p1_web_api
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=db
+      - DB_NAME=metrics_db
+      - DB_USER=admin_user
+      - DB_PASSWORD=network_password
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
