@@ -1,0 +1,37 @@
+# Local Python virtual environments are not needed inside the image.
+.venv/
+venv/
+
+# Python automatically generated cache files.
+__pycache__/
+*.py[cod]
+
+# Local environment variables may contain secrets.
+# Production configuration will be supplied at runtime.
+.env
+
+# Git history and GitHub metadata are unnecessary inside the container.
+.git/
+.github/
+
+# Test and coverage caches.
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE and operating-system files.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local databases and application logs.
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Documentation and files not required by the running application.
+README.md
+docs/
