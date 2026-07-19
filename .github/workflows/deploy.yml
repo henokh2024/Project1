@@ -1,0 +1,82 @@
+name: Build, Scan, and Deploy API
+
+# Start this pipeline whenever code is pushed to the main branch.
+# workflow_dispatch also lets us start it manually from GitHub.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Values that are not secret can be stored here.
+env:
+  AZURE_WEBAPP_NAME: henok-secure-api-2026
+  DOCKER_IMAGE: henokabebe/project1-api
+
+jobs:
+  build-scan-deploy:
+    name: Build, Scan, Push, and Deploy
+    runs-on: ubuntu-latest
+
+    # The workflow only needs permission to read the repository code.
+    permissions:
+      contents: read
+
+    steps:
+      # Step 1: Download the repository code onto the GitHub runner.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Step 2: Enable Docker Buildx for modern Docker builds.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Sign in to Docker Hub using encrypted GitHub secrets.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Step 4: Build the image locally on the GitHub runner.
+      # Two tags are created:
+      # 1. The unique Git commit SHA
+      # 2. The convenient latest tag
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+            ${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Step 5: Scan the newly built image for high and critical CVEs.
+      # The pipeline fails if fixable high or critical vulnerabilities
+      # are discovered.
+      - name: Scan image with Docker Scout
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: local://${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          only-severities: critical,high
+          only-fixed: true
+          exit-code: true
+
+      # Step 6: Push the image only after the security scan succeeds.
+      - name: Push Docker image
+        run: |
+          docker push "${DOCKER_IMAGE}:${GITHUB_SHA}"
+          docker push "${DOCKER_IMAGE}:latest"
+
+      # Step 7: Configure Azure App Service to run the exact image
+      # created from this Git commit.
+      - name: Deploy image to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: docker.io/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
