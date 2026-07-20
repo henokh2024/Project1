@@ -6,18 +6,52 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from app.keyvault import get_secret_from_key_vault
 
 load_dotenv()
 
-# temporary secret key
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "7bca9c84e2a3928e1d2c4b5d6e7f8a90123456789abcdef0123456789abcdef")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+
+def load_jwt_secret() -> str:
+    """
+    Load the JWT signing secret.
+
+    Azure:
+        Retrieve the secret from Azure Key Vault.
+
+    Local fallback:
+        Read JWT_SECRET_KEY from the local .env file.
+    """
+
+    key_vault_url = os.getenv("KEY_VAULT_URL")
+
+    if key_vault_url:
+        return get_secret_from_key_vault("JWT-SECRET-KEY")
+
+    local_secret = os.getenv("JWT_SECRET_KEY")
+
+    if not local_secret:
+        raise RuntimeError(
+            "JWT secret is unavailable. Configure KEY_VAULT_URL "
+            "or JWT_SECRET_KEY."
+        )
+
+    return local_secret
+
+
+JWT_SECRET_KEY = load_jwt_secret()
+
+JWT_ALGORITHM = os.getenv(
+    "JWT_ALGORITHM",
+    "HS256",
 )
 
-if not JWT_SECRET_KEY:
-    raise RuntimeError("JWT_SECRET_KEY is not configured")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "30",
+    )
+)
+
 
 password_context = CryptContext(
     schemes=["bcrypt"],

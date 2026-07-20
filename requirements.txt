@@ -10,6 +10,8 @@ pytest
 httpx
 prometheus-client
 starlette
+azure-identity
+azure-keyvault-secrets
 =======
 annotated-doc==0.0.4
 annotated-types==0.7.0
