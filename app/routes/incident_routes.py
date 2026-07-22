@@ -4,6 +4,15 @@ from app.auth import get_current_user
 from app.models import IncidentCreate, IncidentResponse
 
 
+
+# Create a dedicated router for incident-related endpoints.
+#
+# prefix="/incidents"
+# All routes in this file will begin with:
+#   /incidents
+#
+# tags=["Incidents"]
+# Groups these endpoints together in Swagger UI.
 router = APIRouter(
     prefix="/incidents",
     tags=["Incidents"],

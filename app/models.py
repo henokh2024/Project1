@@ -31,6 +31,20 @@ class UserRegister(BaseModel):
 
 
 class UserLogin(BaseModel):
+    """
+    Request model for user authentication.
+
+    This model represents the credentials submitted when a user
+    attempts to log in.
+
+    Example Request:
+    {
+        "username": "henok",
+        "password": "password123"
+    }
+    """
+
+    # Username supplied by the user during login.
     username: str
 
     password: str
@@ -47,6 +61,24 @@ class UserLogin(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    """
+    Response model returned after successful authentication.
+
+    This ensures all login responses follow the same structure.
+
+    Example Response:
+    {
+        "access_token": "eyJhbGciOiJIUzI1NiIs...",
+        "token_type": "bearer"
+    }
+
+    Clients should store the access token and include it in
+    subsequent requests using:
+
+        Authorization: Bearer <token>
+    """
+
+    # JWT issued after successful login.
     access_token: str
     token_type: str
 

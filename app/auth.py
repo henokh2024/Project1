@@ -210,6 +210,8 @@ def verify_access_token(token: str) -> str:
         # The "sub" claim contains the authenticated username.
         username = payload.get("sub")
 
+        # Reject tokens that do not identify a user, even when
+        # their signature and expiration are otherwise valid.
         if username is None:
             raise credentials_exception
 

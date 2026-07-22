@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
+# Authentication utility functions used by the API routes.
+# These functions handle password security and JWT generation.
 from app.auth import (
     create_access_token,
     hash_password,
     verify_password,
 )
 
+# Pydantic models used to validate incoming requests
+# and structure outgoing responses.
 from app.models import (
     TokenResponse,
     UserRegister,
@@ -58,6 +62,9 @@ def register_user(user: UserRegister):
         "hashed_password": hashed_password,
     }
 
+    # Return a confirmation response.
+    #
+    # Never return passwords or password hashes to the client.
     return {
         "message": "User registered successfully",
         "username": user.username,
@@ -97,6 +104,7 @@ def login_user(
         stored_user["hashed_password"],
     )
 
+    # Reject the login attempt if password verification fails.
     if not password_is_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -111,6 +119,13 @@ def login_user(
         form_data.username
     )
 
+    # Return the JWT using the standard Bearer token format.
+    #
+    # Clients should include this token in the Authorization header:
+    #
+    # Authorization: Bearer <token>
+    #
+    # when accessing protected API routes.
     return {
         "access_token": token,
         "token_type": "bearer",
