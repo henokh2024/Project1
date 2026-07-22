@@ -2,27 +2,68 @@ services:
   db:
     image: postgres:15-alpine
     container_name: p1_backend
+
+    # Restart PostgreSQL automatically after a VM or Docker restart.
+    restart: unless-stopped
+
+    # Read database credentials from the VM's .env file.
     environment:
-      POSTGRES_USER: admin_user
-      POSTGRES_PASSWORD: network_password
-      POSTGRES_DB: metrics_db
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    # Store database data permanently outside the container.
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+    # Checks whether PostgreSQL is ready before starting the API.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - project1-network
+
   web:
-    build: .
+    # GitHub Actions will build, scan, and push this image.
+    # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username.
+    image: henokabebe/project1-api:latest
+
     container_name: p1_web_api
+
+    restart: unless-stopped
+
     ports:
-      - "8080:8080"
+      - "8080:8000"
+
+    # Load application secrets from the VM's local .env file.
+    env_file:
+      - .env
+
     environment:
-      - DB_HOST=db
-      - DB_NAME=metrics_db
-      - DB_USER=admin_user
-      - DB_PASSWORD=network_password
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+    # Do not start the API until PostgreSQL becomes healthy.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+
+    networks:
+      - project1-network
 
 volumes:
   pgdata:
+
+networks:
+  project1-network:
+    driver: bridge
