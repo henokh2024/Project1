@@ -1,44 +1,32 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 
 # Authentication utility functions used by the API routes.
 # These functions handle password security and JWT generation.
 from app.auth import (
     create_access_token,
     hash_password,
-    verify_password
+    verify_password,
 )
 
 # Pydantic models used to validate incoming requests
 # and structure outgoing responses.
 from app.models import (
     TokenResponse,
-    UserLogin,
-    UserRegister
+    UserRegister,
 )
 
-# Create a dedicated router for authentication-related endpoints.
-#
-# prefix="/auth"
-# Ensures all routes in this file are grouped under:
-#   /auth/register
-#   /auth/login
-#
-# tags=["Authentication"]
-# Groups these endpoints together in Swagger UI for easier navigation.
+
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"],
 )
 
-# Temporary in-memory user store.
+
+# Temporary in-memory user storage.
 #
-# This is used only during development and testing to validate
-# the authentication workflow without introducing a database.
-#
-# IMPORTANT:
-# - Data is lost whenever the application restarts.
-# - This should be replaced with a DAO and persistent database
-#   (PostgreSQL, Azure SQL, etc.) in a production environment.
+# Important:
+# All registered users disappear when the FastAPI application restarts.
 users_database = {}
 
 
@@ -50,21 +38,13 @@ def register_user(user: UserRegister):
     """
     Register a new user.
 
-    Workflow:
-    1. Validate incoming registration data.
-    2. Ensure the username does not already exist.
-    3. Hash the user's password before storage.
-    4. Store the user record.
-    5. Return a success response.
-
-    Security Notes:
-    - Passwords are never stored in plain text.
-    - Password hashing uses bcrypt via the auth utility layer.
+    The endpoint:
+    1. Checks whether the username already exists.
+    2. Hashes the plain-text password.
+    3. Stores the username and hashed password.
     """
 
-    # Prevent duplicate registrations.
-    # Usernames serve as unique identifiers within the temporary
-    # in-memory data store.
+    # Prevent two users from registering the same username.
     if user.username in users_database:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -72,13 +52,11 @@ def register_user(user: UserRegister):
         )
 
     # Convert the plain-text password into a secure bcrypt hash.
-    # Storing hashed passwords reduces the impact of data exposure.
     hashed_password = hash_password(user.password)
 
-    # Store the user record.
+    # Store the username and hashed password.
     #
-    # The username is used as the dictionary key to simplify lookups
-    # during login authentication.
+    # The original plain-text password is never stored.
     users_database[user.username] = {
         "username": user.username,
         "hashed_password": hashed_password,
@@ -97,39 +75,32 @@ def register_user(user: UserRegister):
     "/login",
     response_model=TokenResponse,
 )
-def login_user(user: UserLogin):
+def login_user(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+):
     """
-    Authenticate a user and issue a JWT.
+    Authenticate a user and return a JWT access token.
 
-    Workflow:
-    1. Locate the user record.
-    2. Verify the provided password.
-    3. Generate a JWT access token.
-    4. Return the token to the client.
-
-    Security Notes:
-    - Invalid usernames and invalid passwords return the same error.
-      This prevents attackers from discovering which usernames exist.
-    - The JWT is later used to access protected routes.
+    OAuth2PasswordRequestForm is used because Swagger's Authorize
+    button sends the username and password as form data instead of JSON.
     """
 
-    # Attempt to locate the user in the temporary user store.
-    stored_user = users_database.get(user.username)
+    # Look for the submitted username in the user database.
+    stored_user = users_database.get(form_data.username)
 
-    # Return a generic authentication failure if the user
-    # does not exist.
-    #
-    # We intentionally avoid revealing whether the username
-    # exists to reduce user-enumeration attacks.
+    # Do not reveal whether the username or password was incorrect.
     if stored_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
         )
 
-    # Compare the provided password against the stored bcrypt hash.
+    # Compare the submitted password with the stored bcrypt hash.
     password_is_valid = verify_password(
-        user.password,
+        form_data.password,
         stored_user["hashed_password"],
     )
 
@@ -138,16 +109,15 @@ def login_user(user: UserLogin):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
         )
 
-    # Generate a signed JWT for the authenticated user.
-    #
-    # The token contains:
-    # - User identity (subject)
-    # - Expiration timestamp
-    #
-    # The token is signed using the application's secret key.
-    token = create_access_token(user.username)
+    # Create a signed JWT containing the authenticated username.
+    token = create_access_token(
+        form_data.username
+    )
 
     # Return the JWT using the standard Bearer token format.
     #

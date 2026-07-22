@@ -3,6 +3,12 @@ import os
 from azure.monitor.opentelemetry import configure_azure_monitor
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+
 # Reduce verbose Azure SDK/exporter logs.
 logging.getLogger("azure").setLevel(logging.WARNING)
 logging.getLogger(
@@ -17,6 +23,10 @@ logging.getLogger(
 # or any local modules that import FastAPI.
 if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
     configure_azure_monitor()
+    
+    logging.info(
+        "Azure Monitor telemetry is enabled."
+    )
 else:
     logging.warning(
         "Application Insights connection string is missing. "

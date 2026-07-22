@@ -1,12 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
-# Import the authentication dependency responsible for:
-# 1. Extracting the JWT from the Authorization header.
-# 2. Validating the JWT signature and expiration.
-# 3. Returning the authenticated username.
-#
-# Any route using this dependency automatically becomes protected.
 from app.auth import get_current_user
+from app.models import IncidentCreate, IncidentResponse
+
 
 
 # Create a dedicated router for incident-related endpoints.
@@ -23,54 +19,82 @@ router = APIRouter(
 )
 
 
-@router.get("/")
+# Temporary in-memory storage for incidents.
+#
+# The information will disappear whenever the application restarts.
+# A real production application would use a database.
+incidents_database = []
+
+
+@router.get(
+    "/",
+    response_model=list[IncidentResponse],
+)
 def get_incidents(
-    current_user: str = Depends(get_current_user)
+    current_user: str = Depends(get_current_user),
 ):
     """
-    Retrieve incident information for authenticated users.
+    Return all incidents.
 
-    Authentication Flow:
-    --------------------
-    1. Client sends a JWT in the Authorization header.
-    2. FastAPI executes get_current_user().
-    3. The JWT is validated.
-    4. The username is extracted from the token.
-    5. The route executes only if authentication succeeds.
-
-    Current Implementation:
-    -----------------------
-    This endpoint returns placeholder incident data to demonstrate
-    route protection and JWT authentication.
-
-    Future Enhancements:
-    --------------------
-    - Retrieve incidents from a database.
-    - Support incident creation and updates.
-    - Add role-based authorization.
-    - Integrate incident telemetry into Azure Monitor.
+    A valid JWT token is required because this endpoint
+    uses the get_current_user dependency.
     """
 
-    # current_user contains the username extracted from the JWT.
-    #
-    # Example:
-    # If the JWT was created for user "X",
-    # current_user will contain:
-    #
-    #     "X"
-    #
-    # This allows future business logic to return
-    # user-specific incident data.
-    return {
-        "message": "Protected incident data retrieved",
+    return incidents_database
 
-        # Useful during development and testing to verify
-        # that authentication is functioning correctly.
-        "authenticated_user": current_user,
 
-        # Placeholder response.
-        #
-        # In future phases this will likely be replaced with
-        # records from PostgreSQL or another persistent store.
-        "incidents": []
+@router.post(
+    "/",
+    response_model=IncidentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_incident(
+    incident: IncidentCreate,
+    current_user: str = Depends(get_current_user),
+):
+    """
+    Create a new incident.
+
+    A valid JWT token is required.
+    """
+
+    # Only allow the supported severity values.
+    allowed_severities = {
+        "low",
+        "medium",
+        "high",
+        "critical",
     }
+
+    # Convert the submitted severity to lowercase so values
+    # such as "HIGH" and "High" are treated as "high".
+    normalized_severity = incident.severity.lower()
+
+    if normalized_severity not in allowed_severities:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Severity must be low, medium, high, or critical."
+            ),
+        )
+
+    # Generate the next incident ID.
+    #
+    # The first incident receives ID 1, the second receives ID 2,
+    # and so on.
+    incident_id = len(incidents_database) + 1
+
+    # Build the complete incident record.
+    new_incident = {
+        "id": incident_id,
+        "title": incident.title,
+        "description": incident.description,
+        "severity": normalized_severity,
+        "status": "open",
+        "created_by": current_user,
+    }
+
+    # Save the incident in temporary memory.
+    incidents_database.append(new_incident)
+
+    return new_incident

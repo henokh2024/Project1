@@ -1,55 +1,33 @@
-"""
-Pydantic Data Models
-
-This module defines the request and response schemas used by the
-authentication layer of the application.
-
-FastAPI uses these models to:
-
-- Validate incoming request data
-- Reject invalid input automatically
-- Generate OpenAPI/Swagger documentation
-- Ensure API responses follow a consistent structure
-
-These models represent the contract between API clients and the backend.
-"""
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserRegister(BaseModel):
-    """
-    Request model for user registration.
-
-    This model defines the data required when a new user creates
-    an account.
-
-    Validation Rules:
-    - Username must be between 3 and 50 characters.
-    - Password must contain at least 8 characters.
-
-    Example Request:
-    {
-        "username": "henok",
-        "password": "password123"
-    }
-    """
-
-    # Usernames act as unique identifiers in the current
-    # authentication implementation.
-    #
-    # The minimum length helps prevent meaningless usernames,
-    # while the maximum length avoids excessively large inputs.
     username: str = Field(
         min_length=3,
-        max_length=50
+        max_length=50,
     )
 
-    # Require a minimum password length to encourage stronger
-    # credentials and reduce weak-password usage.
     password: str = Field(
-        min_length=8
+        min_length=8,
+        max_length=72,
     )
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, password: str) -> str:
+        """
+        Bcrypt accepts a maximum of 72 bytes.
+
+        Some Unicode characters use more than one byte, so checking
+        character count alone is not enough.
+        """
+
+        if len(password.encode("utf-8")) > 72:
+            raise ValueError(
+                "Password must not exceed 72 bytes."
+            )
+
+        return password
 
 
 class UserLogin(BaseModel):
@@ -69,11 +47,17 @@ class UserLogin(BaseModel):
     # Username supplied by the user during login.
     username: str
 
-    # Plain-text password supplied by the user.
-    #
-    # This password is never stored directly. It is compared
-    # against a previously stored bcrypt hash.
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, password: str) -> str:
+        if len(password.encode("utf-8")) > 72:
+            raise ValueError(
+                "Password must not exceed 72 bytes."
+            )
+
+        return password
 
 
 class TokenResponse(BaseModel):
@@ -96,12 +80,43 @@ class TokenResponse(BaseModel):
 
     # JWT issued after successful login.
     access_token: str
-
-    # Authentication scheme used by the API.
-    #
-    # The value is expected to be:
-    #     "bearer"
-    #
-    # This helps clients construct the Authorization header
-    # correctly for protected routes.
     token_type: str
+
+
+class IncidentCreate(BaseModel):
+    """
+    Defines the information a client must provide
+    when creating a new incident.
+    """
+
+    title: str = Field(
+        ...,
+        min_length=3,
+        max_length=100,
+        examples=["Virtual machine CPU usage is high"],
+    )
+
+    description: str = Field(
+        ...,
+        min_length=5,
+        max_length=500,
+        examples=["CPU usage remained above 90% for ten minutes."],
+    )
+
+    severity: str = Field(
+        ...,
+        examples=["high"],
+    )
+
+
+class IncidentResponse(BaseModel):
+    """
+    Defines the complete incident returned by the API.
+    """
+
+    id: int
+    title: str
+    description: str
+    severity: str
+    status: str
+    created_by: str

@@ -1,19 +1,4 @@
-"""
-Authentication Utilities
-
-This module contains reusable security functions for:
-
-- Loading JWT configuration from environment variables
-- Hashing user passwords
-- Verifying passwords during login
-- Creating short-lived JWT access tokens
-- Validating JWTs for protected routes
-- Identifying the currently authenticated user
-
-Route files should call these functions instead of implementing
-password or token logic directly.
-"""
-
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -23,76 +8,125 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
+# Import the function that retrieves secrets from Azure Key Vault.
+from app.keyvault import get_secret
 
-# Load configuration values from the local .env file.
-#
-# In Azure, these values can later come from App Service settings
-# or Azure Key Vault instead of a local file.
+
+# Load local environment variables from the .env file.
+# This is mainly useful during local development.
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+def load_jwt_secret() -> str:
+    """
+    Load the JWT signing secret.
+
+    First:
+        Try to retrieve the secret from Azure Key Vault.
+
+    Fallback:
+        If Key Vault is unavailable during local development,
+        retrieve JWT_SECRET_KEY from the local environment.
+
+    The application stops if neither source provides a secret.
+    """
+
+    try:
+        # Retrieve the secret named "jwt-secret-key" from Azure Key Vault.
+        jwt_secret = get_secret("jwt-secret-key")
+        logger.info(
+            "JWT signing secret loaded from Azure key Vault"
+        )
+        return jwt_secret
+    except Exception as key_vault_error:
+        logger.warning(
+            "Key Vault retrieval failed. Using local fallback. Error: %s",
+            key_vault_error,
+        )
+
+        # Key Vault may be unavailable locally if Azure authentication
+        # or network access is not configured.
+
+        local_secret = os.getenv("JWT_SECRET_KEY")
+
+        # Do not allow the application to start without a secure JWT secret.
+        if not local_secret:
+            raise RuntimeError(
+                "JWT_SECRET_KEY could not be retrieved from Azure Key Vault "
+                "and JWT_SECRET_KEY is not configured in the environment."
+            ) from key_vault_error
+        logger.info(
+            "JWT signing secret loaded from environment fallback."
+         )
+
+        # Use the local .env secret only as a development fallback.
+        return local_secret
 
 
-# Read JWT configuration from environment variables rather than
-# hardcoding secrets in the source code.
-#
-# JWT_SECRET_KEY:
-# Signs tokens and verifies that they were issued by this application.
-#
-# JWT_ALGORITHM:
-# Defines the signing algorithm used to create and validate tokens.
-#
-# ACCESS_TOKEN_EXPIRE_MINUTES:
-# Controls how long an issued access token remains valid.
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+# Load the JWT secret when the application starts.
+JWT_SECRET_KEY = load_jwt_secret()
+
+# The algorithm used to sign and verify JWT tokens.
+JWT_ALGORITHM = os.getenv(
+    "JWT_ALGORITHM",
+    "HS256",
+)
+
+# The number of minutes before an access token expires.
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+    os.getenv(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "30",
+    )
 )
 
 
-# Stop application startup when the secret key is missing.
-#
-# Authentication should never operate without a signing key because
-# tokens could not be created or validated securely.
-if not JWT_SECRET_KEY:
-    raise RuntimeError("JWT_SECRET_KEY is not configured")
-
-
-# Configure bcrypt as the password-hashing algorithm.
-#
-# Passwords must never be stored in plain text. Bcrypt generates
-# salted hashes that can be safely stored and later verified.
+# Configure bcrypt for password hashing.
 password_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
 )
 
 
-# Configure FastAPI to extract Bearer tokens from the
-# Authorization header of protected requests.
+# Extract the Bearer token from the Authorization header.
 #
-# Example header:
-# Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
-#
-# tokenUrl tells FastAPI and Swagger where users obtain a token.
-# It does not perform the login itself.
+# tokenUrl tells FastAPI Swagger where users should log in
+# to obtain an access token.
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/auth/login"
+    tokenUrl="/auth/login",
 )
+
+
+def validate_bcrypt_password_length(password: str) -> None:
+    """
+    Validate that a password does not exceed bcrypt's 72-byte limit.
+
+    We check bytes instead of characters because some Unicode characters
+    use more than one byte when encoded with UTF-8.
+
+    Raises:
+        ValueError if the password is longer than 72 bytes.
+    """
+
+    password_length_in_bytes = len(
+        password.encode("utf-8")
+    )
+
+    if password_length_in_bytes > 72:
+        raise ValueError(
+            "Password must not exceed 72 bytes when using bcrypt."
+        )
 
 
 def hash_password(password: str) -> str:
     """
     Convert a plain-text password into a secure bcrypt hash.
 
-    This function is called during registration before the password
-    is stored. The original password must never be saved.
-
-    Args:
-        password: The plain-text password supplied by the user.
-
-    Returns:
-        A salted bcrypt password hash.
+    The password length is validated before bcrypt processes it.
     """
+
+    validate_bcrypt_password_length(password)
+
     return password_context.hash(password)
 
 
@@ -101,19 +135,18 @@ def verify_password(
     hashed_password: str,
 ) -> bool:
     """
-    Verify a login password against a previously stored hash.
-
-    Passlib applies bcrypt to the entered password using the settings
-    embedded in the stored hash. The original password does not need
-    to be decrypted or recovered.
-
-    Args:
-        plain_password: The password entered during login.
-        hashed_password: The bcrypt hash stored during registration.
+    Compare a plain-text password with a stored bcrypt hash.
 
     Returns:
-        True when the password matches; otherwise, False.
+        True when the password matches.
+        False when it does not match.
+
+    Raises:
+        ValueError if the submitted password exceeds 72 bytes.
     """
+
+    validate_bcrypt_password_length(plain_password)
+
     return password_context.verify(
         plain_password,
         hashed_password,
@@ -122,40 +155,22 @@ def verify_password(
 
 def create_access_token(username: str) -> str:
     """
-    Create a signed, short-lived JWT for an authenticated user.
-
-    The token contains two claims:
-
-    - sub: Identifies the authenticated user.
-    - exp: Defines when the token expires.
-
-    Sensitive information such as passwords must never be stored
-    inside the JWT payload because JWT payloads can be decoded by
-    anyone who possesses the token.
-
-    Args:
-        username: The identity to store as the token subject.
-
-    Returns:
-        A signed JWT string.
+    Create a signed JWT access token for an authenticated user.
     """
 
-    # Use UTC to ensure token expiration behaves consistently
-    # regardless of the server's physical location or time zone.
+    # Calculate when the token should expire.
     expiration_time = datetime.now(timezone.utc) + timedelta(
         minutes=ACCESS_TOKEN_EXPIRE_MINUTES
     )
 
-    # Build the claims that will be included in the JWT.
+    # Store the username and expiration time inside the token.
     token_payload = {
         "sub": username,
         "exp": expiration_time,
     }
 
-    # Sign the token with the application's secret key.
-    #
-    # The signature allows the API to detect whether the payload
-    # was modified after the token was issued.
+    # Sign the token using the secret retrieved from Key Vault
+    # or the local environment fallback.
     token = jwt.encode(
         token_payload,
         JWT_SECRET_KEY,
@@ -167,30 +182,16 @@ def create_access_token(username: str) -> str:
 
 def verify_access_token(token: str) -> str:
     """
-    Validate a JWT and return the authenticated username.
-
-    Validation includes:
-
-    - Checking the token signature
-    - Confirming the expected signing algorithm
-    - Checking the expiration time
-    - Confirming that a subject claim exists
-
-    Args:
-        token: The Bearer token extracted from the request.
+    Decode and validate a JWT access token.
 
     Returns:
-        The username stored in the token's subject claim.
+        The username stored in the token.
 
     Raises:
-        HTTPException: When the token is invalid, expired, altered,
-        or missing the required subject claim.
+        HTTP 401 if the token is invalid, missing required data,
+        incorrectly signed, or expired.
     """
 
-    # Define one consistent authentication error response.
-    #
-    # Returning the same response for all token failures avoids
-    # exposing unnecessary security details to the client.
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
@@ -198,17 +199,15 @@ def verify_access_token(token: str) -> str:
     )
 
     try:
-        # Decode and validate the token.
-        #
-        # python-jose automatically verifies the signature and
-        # expiration claim during this operation.
+        # Decode the token using the same secret and algorithm
+        # that were used when the token was created.
         payload = jwt.decode(
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
         )
 
-        # Retrieve the authenticated user's identity.
+        # The "sub" claim contains the authenticated username.
         username = payload.get("sub")
 
         # Reject tokens that do not identify a user, even when
@@ -219,8 +218,6 @@ def verify_access_token(token: str) -> str:
         return username
 
     except JWTError as error:
-        # Convert token-library errors into a standard HTTP 401
-        # response that FastAPI can send to the client.
         raise credentials_exception from error
 
 
@@ -228,22 +225,10 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
 ) -> str:
     """
-    Extract and validate the JWT for a protected FastAPI route.
+    FastAPI dependency used to protect endpoints.
 
-    FastAPI first uses oauth2_scheme to read the Bearer token from
-    the Authorization header. The token is then validated by
-    verify_access_token().
-
-    Routes that include:
-
-        current_user: str = Depends(get_current_user)
-
-    are accessible only when a valid JWT is supplied.
-
-    Args:
-        token: The Bearer token automatically extracted by FastAPI.
-
-    Returns:
-        The username of the authenticated user.
+    It extracts the Bearer token from the request,
+    verifies it, and returns the authenticated username.
     """
+
     return verify_access_token(token)
