@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,12 @@ def load_jwt_secret() -> str:
 
 # Load the JWT secret when the application starts.
 JWT_SECRET_KEY = load_jwt_secret()
+logger.info(
+    "JWT secret fingerprint: %s",
+    hashlib.sha256(
+        JWT_SECRET_KEY.encode("utf-8")
+    ).hexdigest()[:12],
+)
 
 # The algorithm used to sign and verify JWT tokens.
 JWT_ALGORITHM = os.getenv(
