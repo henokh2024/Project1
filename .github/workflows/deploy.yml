@@ -133,7 +133,7 @@ jobs:
                   --password-stdin
 
               echo "Pulling the scanned API image..."
-              docker compose pull web
+              docker compose pull
 
               echo "Starting PostgreSQL and replacing the API container..."
               docker compose up -d --no-build --remove-orphans
