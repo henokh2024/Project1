@@ -174,7 +174,13 @@ jobs:
           echo "Pulling the scanned API image..."
           docker-compose pull
 
-          echo "Starting PostgreSQL and replacing the API container..."
+          echo "Stopping previous deployment..."
+          docker-compose down --remove-orphans || true
+
+          echo "Pulling latest images..."
+          docker-compose pull
+
+          echo "Starting updated containers..."
           docker-compose up \
             -d \
             --no-build \
