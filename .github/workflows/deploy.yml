@@ -160,8 +160,8 @@ jobs:
           fi
 
           echo "Checking that docker-compose.yml exists..."
-          if [ ! -f "docker-compose.yml" ] && [ ! -f "compose.yml" ] && [ ! -f "compose.yaml" ]; then
-            echo "ERROR: Docker Compose configuration was not found."
+          if [ ! -f "docker-compose.yml" ]; then
+            echo "ERROR: docker-compose.yml was not found."
             exit 1
           fi
 
@@ -172,10 +172,10 @@ jobs:
               --password-stdin
 
           echo "Pulling the scanned API image..."
-          docker compose pull
+          docker-compose pull
 
           echo "Starting PostgreSQL and replacing the API container..."
-          docker compose up \
+          docker-compose up \
             -d \
             --no-build \
             --remove-orphans
@@ -197,10 +197,10 @@ jobs:
               echo "ERROR: API health check failed."
 
               echo "Compose status:"
-              docker compose ps
+              docker-compose ps
 
               echo "API logs:"
-              docker compose logs --tail=100 web
+              docker-compose logs --tail=100 web
 
               exit 1
             fi
@@ -210,7 +210,7 @@ jobs:
           done
 
           echo "Current container status:"
-          docker compose ps
+          docker-compose ps
 
           echo "Removing unused Docker images..."
           docker image prune -f
