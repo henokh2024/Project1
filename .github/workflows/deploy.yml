@@ -153,6 +153,10 @@ jobs:
           echo "Moving to the project directory..."
           cd "$PROJECT_DIR"
 
+          echo "Updating project files from GitHub..."
+          git fetch origin main
+          git reset --hard origin/main
+
           echo "Checking that the environment file exists..."
           if [ ! -f ".env" ]; then
             echo "ERROR: $PROJECT_DIR/.env does not exist."
