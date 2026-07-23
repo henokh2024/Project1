@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "project1-api"
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["p1_web_api:8080"]

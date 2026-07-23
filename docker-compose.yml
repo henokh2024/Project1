@@ -64,6 +64,36 @@ services:
     networks:
       - project1-network
 
+  # Prometheus monitoring service
+  prometheus:
+    image: prom/prometheus:latest
+
+    # Name of the Prometheus container
+    container_name: p1_prometheus
+
+    # Restart automatically if the VM or Docker restarts
+    restart: unless-stopped
+
+    # Expose Prometheus Web UI
+    ports:
+      - "9090:9090"
+
+    # Mount the local configuration file into the container
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+    # Start Prometheus using the mounted configuration file
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+    # Connect Prometheus to the same Docker network as FastAPI
+    networks:
+      - project1-network
+
+    # Start after the FastAPI container
+    depends_on:
+      - web
+
 volumes:
   pgdata:
 
