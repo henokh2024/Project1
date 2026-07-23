@@ -1,6 +1,7 @@
 import logging
 import os
 from azure.monitor.opentelemetry import configure_azure_monitor
+from prometheus_client import make_asgi_app
 
 
 logging.basicConfig(
@@ -52,6 +53,9 @@ app = FastAPI(
 app.add_middleware(LoggingMiddleware)
 app.include_router(auth_router)
 app.include_router(incident_router)
+
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 
 # Root endpoint

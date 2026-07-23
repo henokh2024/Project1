@@ -6,17 +6,17 @@ services:
     # Restart PostgreSQL automatically after a VM or Docker restart.
     restart: unless-stopped
 
-    # Read database credentials from the VM's .env file.
+    # Read database credentials from the .env file.
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
 
-    # Store database data permanently outside the container.
+    # Persist PostgreSQL data.
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-    # Checks whether PostgreSQL is ready before starting the API.
+    # Wait until PostgreSQL is ready.
     healthcheck:
       test:
         [
@@ -31,8 +31,12 @@ services:
       - project1-network
 
   web:
-    # GitHub Actions will build, scan, and push this image.
-    # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username.
+    # Build locally when using docker compose up --build
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Tag the image with your Docker Hub repository
     image: henokabebe/project1-api:latest
 
     container_name: p1_web_api
@@ -40,9 +44,9 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8080:8000"
+      - "8080:8080"
 
-    # Load application secrets from the VM's local .env file.
+    # Load secrets
     env_file:
       - .env
 
@@ -53,7 +57,6 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
 
-    # Do not start the API until PostgreSQL becomes healthy.
     depends_on:
       db:
         condition: service_healthy

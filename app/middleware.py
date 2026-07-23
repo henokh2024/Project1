@@ -5,15 +5,13 @@ import time
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.metrics import REQUEST_COUNT, REQUEST_LATENCY
 
-# Configure Python logging to display informational messages,
-# warnings, and errors in the terminal.
+
 logging.basicConfig(
     level=logging.INFO,
 )
 
-
-# Create a logger specifically for this Python module.
 logger = logging.getLogger(__name__)
 
 
@@ -23,60 +21,71 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next,
     ):
-        # Record the time when the request first enters the application.
-        start_time = time.time()
+        # perf_counter is designed for measuring elapsed time.
+        start_time = time.perf_counter()
+
+        # Save the requested path once so it can be reused
+        # in both the success and exception sections.
+        endpoint = request.url.path
 
         try:
-            # Send the request to the appropriate FastAPI route
-            # and wait for the route to return a response.
             response = await call_next(request)
 
-            # Calculate how long the request took.
-            # time.time() returns seconds, so we multiply by 1000
-            # to convert the result into milliseconds.
-            duration_ms = (
-                time.time() - start_time
-            ) * 1000
+            # Prometheus histograms normally store duration in seconds.
+            duration_seconds = time.perf_counter() - start_time
 
-            # Create a structured dictionary containing
-            # useful information about the completed request.
+            # Logs are easier to read in milliseconds.
+            duration_ms = duration_seconds * 1000
+
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status_code=str(response.status_code),
+            ).inc()
+
+            REQUEST_LATENCY.labels(
+                method=request.method,
+                endpoint=endpoint,
+            ).observe(duration_seconds)
+
             log_entry = {
                 "method": request.method,
-                "path": request.url.path,
+                "path": endpoint,
                 "status_code": response.status_code,
                 "duration_ms": round(duration_ms, 2),
             }
 
-            # Convert the dictionary into JSON and write it
-            # to the application logs.
             logger.info(
                 json.dumps(log_entry)
             )
 
-            # Return the route's response to the client.
             return response
 
         except Exception as error:
-            # Calculate how long the request ran before failing.
-            duration_ms = (
-                time.time() - start_time
-            ) * 1000
+            duration_seconds = time.perf_counter() - start_time
+            duration_ms = duration_seconds * 1000
 
-            # Create a structured error log.
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status_code="500",
+            ).inc()
+
+            REQUEST_LATENCY.labels(
+                method=request.method,
+                endpoint=endpoint,
+            ).observe(duration_seconds)
+
             error_log_entry = {
                 "method": request.method,
-                "path": request.url.path,
+                "path": endpoint,
                 "status_code": 500,
                 "duration_ms": round(duration_ms, 2),
                 "error": str(error),
             }
 
-            # logger.exception logs the message and includes
-            # the full Python traceback.
             logger.exception(
                 json.dumps(error_log_entry)
             )
 
-            # Re-raise the exception so FastAPI still knows
-            # that the request failed.
             raise

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import get_current_user
 from app.models import IncidentCreate, IncidentResponse
-
+from app.metrics import INCIDENTS_CREATED
 
 
 # Create a dedicated router for incident-related endpoints.
@@ -96,5 +96,5 @@ def create_incident(
 
     # Save the incident in temporary memory.
     incidents_database.append(new_incident)
-
+    INCIDENTS_CREATED.inc()
     return new_incident
