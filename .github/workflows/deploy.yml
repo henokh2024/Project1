@@ -5,7 +5,7 @@ on:
     branches:
       - main
 
-  # Allows manual testing from the GitHub Actions page.
+  # Allows manual execution from the GitHub Actions page.
   workflow_dispatch:
 
 permissions:
@@ -25,12 +25,12 @@ jobs:
 
     steps:
       # Step 1:
-      # Download the latest main-branch code to the GitHub runner.
+      # Download the repository code to the GitHub-hosted runner.
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # Step 2:
-      # Authenticate GitHub Actions with Docker Hub.
+      # Log in to Docker Hub using GitHub repository secrets.
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -38,16 +38,16 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Step 3:
-      # Create the complete Docker Hub image name.
+      # Build the complete Docker image name.
       - name: Set image name
         run: |
           echo "FULL_IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/${IMAGE_NAME}" \
             >> "$GITHUB_ENV"
 
       # Step 4:
-      # Build two tags:
-      # - commit SHA for version tracking and rollback
-      # - latest for the production Compose deployment
+      # Build the Docker image with:
+      # - a commit-specific tag
+      # - the latest tag
       - name: Build Docker image
         run: |
           docker build \
@@ -56,9 +56,7 @@ jobs:
             .
 
       # Step 5:
-      # Scan the exact image built in the previous step.
-      # Exit code 1 stops deployment when a fixable HIGH or CRITICAL
-      # vulnerability is detected.
+      # Scan the exact image that was built.
       - name: Scan Docker image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -70,108 +68,153 @@ jobs:
           severity: HIGH,CRITICAL
 
       # Step 6:
-      # Only push the image if the vulnerability scan succeeds.
+      # Push the image only after the security scan passes.
       - name: Push image to Docker Hub
         run: |
           docker push "${FULL_IMAGE_NAME}:${GITHUB_SHA}"
           docker push "${FULL_IMAGE_NAME}:latest"
 
       # Step 7:
-      # Create the SSH private-key file on the temporary GitHub runner.
+      # Create and validate the SSH private-key file.
       - name: Configure SSH
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_PORT: ${{ secrets.VM_PORT }}
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
         run: |
-          mkdir -p "$HOME/.ssh"
+          set -euo pipefail
 
-          printf '%s\n' "$VM_SSH_KEY" > "$HOME/.ssh/project1_vm_key"
+          if [ -z "$VM_HOST" ]; then
+            echo "ERROR: VM_HOST secret is missing."
+            exit 1
+          fi
+
+          if [ -z "$VM_PORT" ]; then
+            echo "ERROR: VM_PORT secret is missing."
+            exit 1
+          fi
+
+          if [ -z "$VM_SSH_KEY" ]; then
+            echo "ERROR: VM_SSH_KEY secret is missing."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          # Remove Windows carriage-return characters before saving the key.
+          printf '%s\n' "$VM_SSH_KEY" \
+            | tr -d '\r' \
+            > "$HOME/.ssh/project1_vm_key"
 
           chmod 600 "$HOME/.ssh/project1_vm_key"
 
+          # Validate that the secret contains a readable private key.
+          ssh-keygen -y \
+            -f "$HOME/.ssh/project1_vm_key" \
+            > /dev/null
+
+          # Save the Azure Load Balancer SSH endpoint host key.
           ssh-keyscan \
+            -T 15 \
             -p "$VM_PORT" \
             -H "$VM_HOST" \
             >> "$HOME/.ssh/known_hosts"
 
+          chmod 600 "$HOME/.ssh/known_hosts"
+
       # Step 8:
-      # Connect through the Azure Load Balancer NAT port.
-      # The VM pulls the exact image already built and scanned.
+      # Connect to the VM through the Azure Load Balancer NAT rule.
+      # The VM pulls and starts the image that passed the Trivy scan.
       - name: Deploy with Docker Compose
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_PORT: ${{ secrets.VM_PORT }}
           VM_USERNAME: ${{ secrets.VM_USERNAME }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+          DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
             -i "$HOME/.ssh/project1_vm_key" \
             -p "$VM_PORT" \
             "${VM_USERNAME}@${VM_HOST}" \
             "DOCKER_USERNAME='$DOCKER_USERNAME' DOCKER_TOKEN='$DOCKER_TOKEN' bash -s" \
             <<'REMOTE_SCRIPT'
 
-              set -euo pipefail
+          set -euo pipefail
 
-              PROJECT_DIR="$HOME/Project1"
+          PROJECT_DIR="$HOME/Project1"
 
-              echo "Moving to the project directory..."
-              cd "$PROJECT_DIR"
+          echo "Moving to the project directory..."
+          cd "$PROJECT_DIR"
 
-              echo "Checking that the environment file exists..."
-              if [ ! -f ".env" ]; then
-                echo "ERROR: $PROJECT_DIR/.env does not exist."
-                exit 1
-              fi
+          echo "Checking that the environment file exists..."
+          if [ ! -f ".env" ]; then
+            echo "ERROR: $PROJECT_DIR/.env does not exist."
+            exit 1
+          fi
 
-              echo "Logging in to Docker Hub..."
-              echo "$DOCKER_TOKEN" |
-                docker login \
-                  --username "$DOCKER_USERNAME" \
-                  --password-stdin
+          echo "Checking that docker-compose.yml exists..."
+          if [ ! -f "docker-compose.yml" ] && [ ! -f "compose.yml" ] && [ ! -f "compose.yaml" ]; then
+            echo "ERROR: Docker Compose configuration was not found."
+            exit 1
+          fi
 
-              echo "Pulling the scanned API image..."
-              docker compose pull
+          echo "Logging in to Docker Hub..."
+          echo "$DOCKER_TOKEN" |
+            docker login \
+              --username "$DOCKER_USERNAME" \
+              --password-stdin
 
-              echo "Starting PostgreSQL and replacing the API container..."
-              docker compose up -d --no-build --remove-orphans
+          echo "Pulling the scanned API image..."
+          docker compose pull
 
-              echo "Waiting for the API to become healthy..."
+          echo "Starting PostgreSQL and replacing the API container..."
+          docker compose up \
+            -d \
+            --no-build \
+            --remove-orphans
 
-              for attempt in {1..12}; do
-                if curl \
-                  --fail \
-                  --silent \
-                  http://localhost:8080/health > /dev/null; then
+          echo "Waiting for the API to become healthy..."
 
-                  echo "Health check passed."
-                  break
-                fi
+          for attempt in {1..12}; do
+            if curl \
+              --fail \
+              --silent \
+              http://localhost:8080/health \
+              > /dev/null; then
 
-                if [ "$attempt" -eq 12 ]; then
-                  echo "ERROR: API health check failed."
+              echo "Health check passed."
+              break
+            fi
 
-                  echo "Compose status:"
-                  docker compose ps
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: API health check failed."
 
-                  echo "API logs:"
-                  docker compose logs --tail=100 web
-
-                  exit 1
-                fi
-
-                echo "Application is not ready yet. Attempt $attempt of 12..."
-                sleep 5
-              done
-
-              echo "Current container status:"
+              echo "Compose status:"
               docker compose ps
 
-              echo "Removing unused Docker images..."
-              docker image prune -f
+              echo "API logs:"
+              docker compose logs --tail=100 web
 
-              echo "Deployment completed successfully."
+              exit 1
+            fi
+
+            echo "Application is not ready yet. Attempt $attempt of 12..."
+            sleep 5
+          done
+
+          echo "Current container status:"
+          docker compose ps
+
+          echo "Removing unused Docker images..."
+          docker image prune -f
+
+          echo "Deployment completed successfully."
 
           REMOTE_SCRIPT
